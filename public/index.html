@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Local Budget — Pro v4</title>
+  <title>Local Budget — Hobby FULL</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn/plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
   <style>
     .card { @apply bg-white rounded-2xl shadow p-5 border border-slate-100; }
     .btn  { @apply inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium; }
@@ -26,7 +26,7 @@
         <div class="w-9 h-9 rounded-xl bg-blue-600"></div>
         <div>
           <h1 class="text-xl font-bold leading-tight">Local Budget</h1>
-          <div class="text-xs text-slate-500 -mt-1">YNAB-style zero-sum budgeting</div>
+          <div class="text-xs text-slate-500 -mt-1">Hobby plan — single API</div>
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -156,13 +156,6 @@
             <ul id="rule-list" class="text-sm space-y-1"></ul>
           </div>
         </div>
-        <hr class="my-3">
-        <div class="label">Email nightly summary</div>
-        <div class="flex gap-2">
-          <input id="email-input" class="input" placeholder="your@email.com">
-          <button id="email-save" class="btn btn-ghost">Subscribe</button>
-        </div>
-        <div class="text-xs text-slate-500">Optional. Requires setting RESEND_API_KEY in Vercel and configuring a Cron calling /api/cron_nightly.</div>
       </section>
 
       <section id="tab-share" class="card hidden">
@@ -198,6 +191,16 @@ function ym(d){ return (d||new Date()).toISOString().slice(0,7); }
 function prevYm(ymStr){ const [y,m]=ymStr.split('-').map(Number); const d=new Date(y, m-2, 1); return d.toISOString().slice(0,7); }
 function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
 
+async function call(action, body, qs=''){
+  const method = body ? 'POST' : 'GET';
+  const headers = body ? {'Content-Type':'application/json'} : {};
+  const url = '/api/app' + (qs || ('?a='+encodeURIComponent(action)));
+  const payload = body ? JSON.stringify({ action, ...body }) : undefined;
+  const res = await fetch(url, { method, headers, body: payload });
+  const j = await res.json();
+  return j;
+}
+
 const S = {
   share: localStorage.getItem('share') || null,
   useSharedTx: JSON.parse(localStorage.getItem('useSharedTx')||'false'),
@@ -228,15 +231,15 @@ function saveLocal(){
 
 async function saveToServer(){
   const body = { month:S.month, rollovers:S.rollovers, categories:S.categories, assignments:S.assignments, carry:S.carry, goals:S.goals, rules:S.rules };
-  const url = S.share ? `/api/budget?share=${encodeURIComponent(S.share)}` : '/api/budget';
-  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const qs = S.share ? `?a=budget_set&share=${encodeURIComponent(S.share)}` : '?a=budget_set';
+  const r = await fetch('/api/app'+qs, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   log('save:', await r.json());
 }
 const autoSave = debounce(()=>{ saveLocal(); saveToServer().catch(e=>log('autosave error', e.message)); }, 800);
 
 async function loadFromServer(){
-  const url = S.share ? `/api/budget?share=${encodeURIComponent(S.share)}` : '/api/budget';
-  const r = await fetch(url); const j = await r.json() || {};
+  const qs = S.share ? `?a=budget_get&share=${encodeURIComponent(S.share)}` : '?a=budget_get';
+  const r = await fetch('/api/app'+qs); const j = await r.json() || {};
   if (Object.keys(j).length){
     Object.assign(S, { month:j.month||S.month, rollovers:j.rollovers??S.rollovers, categories:j.categories||S.categories, assignments:j.assignments||S.assignments, carry:j.carry||S.carry, goals:j.goals||S.goals, rules:j.rules||S.rules });
     saveLocal(); recompute(); renderAll(); log('load:', { ok:true });
@@ -393,7 +396,7 @@ $('#rule-add').onclick = ()=>{
   autoSave(); recompute(); renderAll();
 };
 
-// Imports
+// Importers
 function parseCSV(text){
   const lines = text.split(/\r?\n/).filter(Boolean);
   if (!lines.length) return [];
@@ -452,30 +455,26 @@ async function importGeneric(){
     else rows = parseCSV(text);
   }
   if (!rows.length) return alert('Could not parse any transactions from file');
-  const r = await fetch('/api/tx_import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rows }) });
-  const j = await r.json(); log('tx_import:', j);
+  const j = await call('tx_import', { rows });
+  log('tx_import:', j);
   await syncTx();
 }
 $('#btn-import-generic').onclick = importGeneric;
 
-// Presence
-async function presenceHeartbeat(){
-  if (!S.share) return;
-  try{ await fetch(`/api/presence?share=${encodeURIComponent(S.share)}`, { method:'POST' }); }catch{}
+// Share tab
+function initShare(){
+  updateShareBadge();
+  $('#share-create').onclick = async ()=>{
+    const j = await call('share_create', {});
+    if (j.share){ S.share = j.share; saveLocal(); updateShareBadge(); alert('Share ID: '+j.share+'\nGive this to your partner to join.'); }
+  };
+  $('#share-join').onclick = async ()=>{
+    const share = $('#share-input').value.trim(); if (!share) return;
+    const j = await call('share_join', { share });
+    if (j.ok){ S.share = share; saveLocal(); loadFromServer(); updateShareBadge(); alert('Joined shared budget '+share); }
+    else { alert('Join failed: '+(j.error||'unknown')); }
+  };
 }
-async function presenceList(){
-  if (!S.share) { $('#presence-list').textContent='—'; return; }
-  try{ const r=await fetch(`/api/presence?share=${encodeURIComponent(S.share)}`); const j=await r.json(); $('#presence-list').textContent = (j.online||[]).join(', ') || '—'; }catch{}
-}
-setInterval(()=>{ presenceHeartbeat(); presenceList(); }, 20000);
-
-// Email subscribe
-$('#email-save').onclick = async ()=>{
-  const email = $('#email-input').value.trim(); if (!email) return;
-  const r = await fetch('/api/subscribe_email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email }) });
-  log('subscribe_email:', await r.json());
-  alert('Subscribed.');
-};
 
 function renderTx(){
   const tbody = $('#tx-body'); tbody.innerHTML='';
@@ -497,23 +496,34 @@ function renderTx(){
 }
 $('#tx-search').oninput = renderTx;
 
-// Backend calls
-async function ensureAuth(){ try{ const r=await fetch('/api/auth_login',{method:'POST'}); log('auth_login:', await r.json()); }catch(e){ log('auth_login error:', e.message);} }
+// Presence
+async function presenceHeartbeat(){
+  if (!S.share) return;
+  try{ await fetch(`/api/app?a=presence_ping&share=${encodeURIComponent(S.share)}`, { method:'POST' }); }catch{}
+}
+async function presenceList(){
+  if (!S.share) { $('#presence-list').textContent='—'; return; }
+  try{ const r=await fetch(`/api/app?a=presence_get&share=${encodeURIComponent(S.share)}`); const j=await r.json(); $('#presence-list').textContent = (j.online||[]).join(', ') || '—'; }catch{}
+}
+setInterval(()=>{ presenceHeartbeat(); presenceList(); }, 20000);
+
+async function ensureAuth(){ const j = await call('auth_login', {}); log('auth_login:', j); }
 async function openPlaid(){
   try{
-    const res=await fetch('/api/create_link_token',{method:'POST'}); const data=await res.json(); log('create_link_token:', data);
-    if(!data.link_token||!/^link-/.test(data.link_token)) throw new Error('Bad link_token');
-    const handler=Plaid.create({ token:data.link_token, onSuccess: async (public_token)=>{
-      const r=await fetch('/api/exchange_public_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({public_token})});
-      log('exchange_public_token:', await r.json()); await syncTx();
+    const dat=await call('create_link_token', {});
+    log('create_link_token:', dat);
+    if(!dat.link_token || !/^link-/.test(dat.link_token)) throw new Error('Bad link_token');
+    const handler=Plaid.create({ token:dat.link_token, onSuccess: async (public_token)=>{
+      const r=await call('exchange_public_token', { public_token });
+      log('exchange_public_token:', r); await syncTx();
       document.querySelector('[data-tab="reports"]').click();
     }}); handler.open();
   }catch(e){ log('Link error:', e.message); }
 }
 async function syncTx(){
   try{
-    const qs = (S.useSharedTx && S.share) ? `?share=${encodeURIComponent(S.share)}` : '';
-    const r=await fetch('/api/tx_sync'+qs,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cursors:{}})});
+    const qs = (S.useSharedTx && S.share) ? `?a=tx_sync&share=${encodeURIComponent(S.share)}` : '?a=tx_sync';
+    const r=await fetch('/api/app'+qs, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cursors:{}})});
     const j=await r.json(); log('tx_sync:', j);
     if(Array.isArray(j.added)){ S.tx=j.added; recompute(); renderAll(); }
   }catch(e){ log('sync error:', e.message); }
@@ -531,7 +541,7 @@ $all('[data-tab]').forEach(btn=>{
 
 function renderAll(){ renderBudget(); renderGoals(); renderRules(); renderTx(); }
 function init(){
-  setupMonthSelect(); renderAll(); ensureAuth(); loadFromServer(); presenceHeartbeat(); presenceList();
+  setupMonthSelect(); renderAll(); ensureAuth(); initShare(); loadFromServer(); presenceHeartbeat(); presenceList();
 }
 init();
 </script>
