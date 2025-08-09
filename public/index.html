@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Local Budget — Smart v1</title>
+  <title>Local Budget — Pro v4</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="https://cdn/plaid.com/link/v2/stable/link-initialize.js"></script>
   <style>
     .card { @apply bg-white rounded-2xl shadow p-5 border border-slate-100; }
     .btn  { @apply inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium; }
@@ -30,9 +30,11 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
-        <select id="month" class="input">
-          <!-- filled by JS as YYYY-MM -->
-        </select>
+        <select id="month" class="input"></select>
+        <span id="share-badge" class="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 hidden"></span>
+        <label class="text-xs flex items-center gap-1"><input id="share-tx-toggle" type="checkbox" class="scale-110"> Use shared transactions</label>
+        <button id="save-budget" class="btn btn-ghost">Save</button>
+        <button id="load-budget" class="btn btn-ghost">Load</button>
         <button id="close-month" class="btn btn-ghost" title="Carry available to next month">Close Month</button>
         <button id="btn-link" class="btn btn-primary">Connect bank</button>
         <button id="btn-sync" class="btn btn-ghost">Sync</button>
@@ -44,11 +46,11 @@
       <button data-tab="goals" class="tab">Goals</button>
       <button data-tab="reports" class="tab">Reports</button>
       <button data-tab="tools" class="tab">Tools</button>
+      <button data-tab="share" class="tab">Share</button>
       <button data-tab="logs" class="tab">Logs</button>
     </nav>
 
     <main class="space-y-4">
-      <!-- Budget -->
       <section id="tab-budget" class="card">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
@@ -75,9 +77,12 @@
             <tbody id="budget-body"></tbody>
           </table>
         </div>
+        <div class="mt-3 flex items-center gap-2">
+          <input id="cat-new" class="input" placeholder="New category name">
+          <button id="cat-add-ui" class="btn btn-ghost">Add Category</button>
+        </div>
       </section>
 
-      <!-- Goals -->
       <section id="tab-goals" class="card hidden">
         <div class="flex items-center justify-between">
           <h2 class="font-semibold">Goals</h2>
@@ -100,7 +105,6 @@
         </div>
       </section>
 
-      <!-- Reports -->
       <section id="tab-reports" class="card hidden">
         <h2 class="font-semibold">Spending</h2>
         <div class="flex items-center gap-2 text-sm">
@@ -115,11 +119,11 @@
             <tbody id="tx-body"></tbody>
           </table>
         </div>
+        <div class="text-xs text-slate-600 mt-2">Presence: <span id="presence-list">—</span></div>
       </section>
 
-      <!-- Tools -->
       <section id="tab-tools" class="card hidden">
-        <h2 class="font-semibold mb-2">Tools & Rules</h2>
+        <h2 class="font-semibold mb-2">Tools & Import</h2>
         <div class="grid md:grid-cols-3 gap-4">
           <div class="space-y-2">
             <div class="label">Loan Calculator</div>
@@ -137,6 +141,11 @@
             <div id="nw-out" class="text-sm mono"></div>
           </div>
           <div class="space-y-2">
+            <div class="label">Import (CSV / OFX / QIF)</div>
+            <input id="file-generic" type="file" accept=".csv,.ofx,.qif,text/ofx,application/x-qw,application/qif,text/plain" class="input w-full">
+            <button id="btn-import-generic" class="btn btn-ghost mt-1">Import</button>
+            <div class="text-xs text-slate-600">CSV headers: date, name/description/payee, amount. OFX/QIF parsed automatically.</div>
+            <hr class="my-3">
             <div class="label">Auto-categorization Rules</div>
             <div class="text-xs text-slate-600">Example: merchant contains <b>walmart</b> → Groceries</div>
             <div class="flex gap-2">
@@ -147,9 +156,32 @@
             <ul id="rule-list" class="text-sm space-y-1"></ul>
           </div>
         </div>
+        <hr class="my-3">
+        <div class="label">Email nightly summary</div>
+        <div class="flex gap-2">
+          <input id="email-input" class="input" placeholder="your@email.com">
+          <button id="email-save" class="btn btn-ghost">Subscribe</button>
+        </div>
+        <div class="text-xs text-slate-500">Optional. Requires setting RESEND_API_KEY in Vercel and configuring a Cron calling /api/cron_nightly.</div>
       </section>
 
-      <!-- Logs -->
+      <section id="tab-share" class="card hidden">
+        <h2 class="font-semibold mb-2">Shared Budget</h2>
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <div class="label">Start a shared budget</div>
+            <button id="share-create" class="btn btn-primary">Create Share Link</button>
+            <div class="text-sm">Share ID: <span id="share-id" class="font-mono"></span></div>
+            <div class="text-xs text-slate-500">Give this ID to your partner. Members can Save/Load and (optionally) use shared transactions.</div>
+          </div>
+          <div class="space-y-2">
+            <div class="label">Join a shared budget</div>
+            <input id="share-input" class="input" placeholder="Paste Share ID (e.g., s_ab12cd34)">
+            <button id="share-join" class="btn btn-ghost">Join</button>
+          </div>
+        </div>
+      </section>
+
       <section id="tab-logs" class="card hidden">
         <h2 class="font-semibold">Logs</h2>
         <pre id="log" class="bg-slate-50 border rounded-lg p-3 text-xs h-64 overflow-auto"></pre>
@@ -158,49 +190,34 @@
   </div>
 
 <script>
-// --- Utilities ---
 function $(q){ return document.querySelector(q); }
 function $all(q){ return Array.from(document.querySelectorAll(q)); }
 function fmt(n){ return (n<0?'-':'')+'$'+Math.abs(n).toFixed(2); }
-function log(...args){ const el=$('#log'); el.textContent += args.map(a=>typeof a==='string'?a:JSON.stringify(a,null,2)).join(' ') + "\\n"; el.scrollTop = el.scrollHeight; }
+function log(...args){ const el=$('#log'); el.textContent += args.map(a=>typeof a==='string'?a:JSON.stringify(a,null,2)).join(' ') + "\n"; el.scrollTop = el.scrollHeight; }
 function ym(d){ return (d||new Date()).toISOString().slice(0,7); }
 function prevYm(ymStr){ const [y,m]=ymStr.split('-').map(Number); const d=new Date(y, m-2, 1); return d.toISOString().slice(0,7); }
+function debounce(fn, ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
 
-// --- State ---
 const S = {
+  share: localStorage.getItem('share') || null,
+  useSharedTx: JSON.parse(localStorage.getItem('useSharedTx')||'false'),
   month: ym(),
   rollovers: JSON.parse(localStorage.getItem('rollovers')||'true'),
   categories: JSON.parse(localStorage.getItem('categories')||'[]'),
-  assignments: JSON.parse(localStorage.getItem('assignments')||'{}'), // { "YYYY-MM": { "Groceries": 400, ... } }
-  carry: JSON.parse(localStorage.getItem('carry')||'{}'), // { "YYYY-MM": { "Groceries": 25.12, ... } }
+  assignments: JSON.parse(localStorage.getItem('assignments')||'{}'),
+  carry: JSON.parse(localStorage.getItem('carry')||'{}'),
   goals: JSON.parse(localStorage.getItem('goals')||'[]'),
-  rules: JSON.parse(localStorage.getItem('rules')||'[]'), // [{match:'walmart', category:'Groceries'}]
+  rules: JSON.parse(localStorage.getItem('rules')||'[]'),
   tx: []
 };
-
 if (!S.categories || S.categories.length === 0){
   S.categories = ['Rent/Mortgage','Groceries','Dining Out','Transportation','Utilities'];
 }
 if (!(S.month in S.assignments)) S.assignments[S.month] = {};
 
-// --- Month controls ---
-function setupMonthSelect(){
-  const sel = $('#month'); sel.innerHTML='';
-  const now = new Date();
-  for (let i=0;i<18;i++){
-    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
-    const k = d.toISOString().slice(0,7);
-    const opt = document.createElement('option');
-    opt.value = k; opt.textContent = k; if (k===S.month) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  sel.onchange = ()=>{ S.month = sel.value; if(!(S.month in S.assignments)) S.assignments[S.month]={}; save(); recompute(); renderAll(); };
-  $('#rollovers').checked = !!S.rollovers;
-  $('#rollovers').onchange = ()=>{ S.rollovers = $('#rollovers').checked; save(); recompute(); renderAll(); };
-  $('#close-month').onclick = closeMonth;
-}
-
-function save(){
+function saveLocal(){
+  localStorage.setItem('share', S.share||'');
+  localStorage.setItem('useSharedTx', JSON.stringify(S.useSharedTx));
   localStorage.setItem('categories', JSON.stringify(S.categories));
   localStorage.setItem('assignments', JSON.stringify(S.assignments));
   localStorage.setItem('carry', JSON.stringify(S.carry));
@@ -209,12 +226,48 @@ function save(){
   localStorage.setItem('rollovers', JSON.stringify(S.rollovers));
 }
 
-// --- Budget logic ---
-function sumSpendFor(cat, month){
-  const [y,m] = month.split('-');
-  const f = (t)=> (t.date||'').startsWith(month) && normalizeCategory(t)===cat;
-  // Plaid amounts are positive for outflow; display as negative activity:
-  return S.tx.filter(f).reduce((a,t)=> a + (t.amount||0), 0);
+async function saveToServer(){
+  const body = { month:S.month, rollovers:S.rollovers, categories:S.categories, assignments:S.assignments, carry:S.carry, goals:S.goals, rules:S.rules };
+  const url = S.share ? `/api/budget?share=${encodeURIComponent(S.share)}` : '/api/budget';
+  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  log('save:', await r.json());
+}
+const autoSave = debounce(()=>{ saveLocal(); saveToServer().catch(e=>log('autosave error', e.message)); }, 800);
+
+async function loadFromServer(){
+  const url = S.share ? `/api/budget?share=${encodeURIComponent(S.share)}` : '/api/budget';
+  const r = await fetch(url); const j = await r.json() || {};
+  if (Object.keys(j).length){
+    Object.assign(S, { month:j.month||S.month, rollovers:j.rollovers??S.rollovers, categories:j.categories||S.categories, assignments:j.assignments||S.assignments, carry:j.carry||S.carry, goals:j.goals||S.goals, rules:j.rules||S.rules });
+    saveLocal(); recompute(); renderAll(); log('load:', { ok:true });
+  } else { log('load: no server state yet'); }
+  updateShareBadge();
+}
+
+function setupMonthSelect(){
+  const sel = $('#month'); sel.innerHTML='';
+  const now = new Date();
+  for (let i=0;i<18;i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const k = d.toISOString().slice(0,7);
+    const opt = document.createElement('option');
+    opt.value=k; opt.textContent=k; if (k===S.month) opt.selected=true;
+    sel.appendChild(opt);
+  }
+  sel.onchange = ()=>{ S.month = sel.value; if(!(S.month in S.assignments)) S.assignments[S.month]={}; autoSave(); recompute(); renderAll(); };
+  $('#rollovers').checked = !!S.rollovers;
+  $('#rollovers').onchange = ()=>{ S.rollovers = $('#rollovers').checked; autoSave(); recompute(); renderAll(); };
+  $('#close-month').onclick = closeMonth;
+  $('#save-budget').onclick = ()=>{ saveLocal(); saveToServer(); };
+  $('#load-budget').onclick = ()=>{ loadFromServer(); };
+  $('#share-tx-toggle').checked = !!S.useSharedTx;
+  $('#share-tx-toggle').onchange = ()=>{ S.useSharedTx = $('#share-tx-toggle').checked; saveLocal(); syncTx(); };
+}
+
+function updateShareBadge(){
+  const badge = $('#share-badge');
+  if (S.share){ badge.textContent = 'Shared: '+S.share; badge.classList.remove('hidden'); }
+  else { badge.classList.add('hidden'); }
 }
 
 function normalizeCategory(t){
@@ -222,59 +275,43 @@ function normalizeCategory(t){
   for (const r of S.rules){
     if (r.match && name.includes(r.match.toLowerCase())) return r.category;
   }
-  // Fallback to Plaid primary category
   return t.personal_finance_category?.primary || t.category?.[0] || 'Uncategorized';
 }
-
+function sumSpendFor(cat, month){
+  const f = (t)=> (t.date||'').startsWith(month) && normalizeCategory(t)===cat;
+  return S.tx.filter(f).reduce((a,t)=> a + (t.amount||0), 0);
+}
 function recompute(){
-  // Build view model for current month
-  const month = S.month;
-  const prev = prevYm(month);
-  const assign = S.assignments[month] || {};
-  const prevCarry = (S.carry[prev] || {});
-  const rows = [];
-  let totalAvail = 0;
-
+  const month = S.month, prev = prevYm(month);
+  const assign = S.assignments[month] || {}; const prevCarry = (S.carry[prev] || {});
+  const rows = []; let totalAvail = 0;
   for (const cat of S.categories){
     const assigned = +((assign[cat]||0));
-    const spend = sumSpendFor(cat, month); // positive number
+    const spend = sumSpendFor(cat, month);
     const rollover = S.rollovers ? +(prevCarry[cat]||0) : 0;
     const available = rollover + assigned - spend;
     totalAvail += available;
     rows.push({ cat, assigned, spend, available, rollover });
   }
-  S._rows = rows;
-  S._totalAvail = totalAvail;
+  S._rows=rows; S._totalAvail=totalAvail;
 }
-
 function setAssignment(cat){
   const v = prompt(`Assign amount for ${cat} in ${S.month}`, String(S.assignments[S.month][cat]||0));
   if (v===null) return;
   const n = parseFloat(v||'0'); if (isNaN(n)) return;
-  S.assignments[S.month][cat] = n; save(); recompute(); renderBudget();
+  S.assignments[S.month][cat] = n; autoSave(); recompute(); renderBudget();
 }
-
 function closeMonth(){
-  // Save current available as carry for next month
-  const next = (function(month){
-    const [y,m]=month.split('-').map(Number);
-    const d = new Date(y, m, 1); // next month
-    return d.toISOString().slice(0,7);
-  })(S.month);
+  const next = (function(month){ const [y,m]=month.split('-').map(Number); const d=new Date(y,m,1); return d.toISOString().slice(0,7); })(S.month);
   S.carry[next] = S.carry[next] || {};
-  for (const r of (S._rows||[])){
-    S.carry[next][r.cat] = r.available;
-  }
-  save();
-  alert(`Closed ${S.month}. Carry posted to ${next}.`);
+  for (const r of (S._rows||[])){ S.carry[next][r.cat] = r.available; }
+  autoSave(); alert(`Closed ${S.month}. Carry posted to ${next}.`);
 }
-
 function renderBudget(){
   const tbody = $('#budget-body'); tbody.innerHTML='';
   for (const r of (S._rows||[])){
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="p-2">${r.cat}</td>
+    tr.innerHTML = `<td class="p-2">${r.cat} <button class="text-xs text-red-600 underline" data-delcat="${r.cat}">remove</button></td>
       <td class="p-2 text-right mono">${fmt(r.assigned)}</td>
       <td class="p-2 text-right mono text-red-600">-${fmt(r.spend).slice(1)}</td>
       <td class="p-2 text-right mono ${r.available<0?'text-red-600':''}">${fmt(r.available)}</td>
@@ -283,25 +320,20 @@ function renderBudget(){
   }
   $('#budget-summary').textContent = 'Available total: ' + fmt(S._totalAvail||0);
   $all('[data-assign]').forEach(b=> b.onclick = ()=> setAssignment(b.getAttribute('data-assign')) );
+  $all('[data-delcat]').forEach(b=> b.onclick = ()=> removeCategory(b.getAttribute('data-delcat')) );
 }
-
-// --- Goals ---
-function addGoal(){
-  const name = $('#goal-name').value.trim();
-  const target = parseFloat($('#goal-target').value||'0');
-  const monthly = parseFloat($('#goal-monthly').value||'0');
-  if (!name || !target || !monthly) return;
-  S.goals.push({ name, target, monthly, progress: 0 });
-  $('#goal-name').value=''; $('#goal-target').value=''; $('#goal-monthly').value='';
-  save(); renderGoals();
-}
-
-function contributeToGoal(idx){
-  const g = S.goals[idx];
-  const amt = parseFloat(prompt(`Contribute to ${g.name}`, String(g.monthly))||'0');
-  if (!amt) return;
-  g.progress = (g.progress||0) + amt;
-  save(); renderGoals();
+$('#cat-add-ui').onclick = ()=>{
+  const name = $('#cat-new').value.trim(); if (!name) return;
+  if (!S.categories.includes(name)) S.categories.push(name);
+  S.assignments[S.month][name] = S.assignments[S.month][name] || 0;
+  $('#cat-new').value=''; autoSave(); recompute(); renderAll();
+};
+function removeCategory(cat){
+  if (!confirm('Remove category "'+cat+'"?')) return;
+  S.categories = S.categories.filter(c=>c!==cat);
+  for (const ymKey of Object.keys(S.assignments)) delete S.assignments[ymKey][cat];
+  for (const ymKey of Object.keys(S.carry)) delete S.carry[ymKey][cat];
+  autoSave(); recompute(); renderAll();
 }
 
 function renderGoals(){
@@ -312,10 +344,8 @@ function renderGoals(){
     const months = g.monthly>0 ? Math.ceil(Math.max(0, g.target - g.progress)/g.monthly) : '∞';
     const li = document.createElement('li');
     li.className = 'p-3 rounded-lg border space-y-2';
-    li.innerHTML = `
-      <div class="flex items-center justify-between">
-        <div>
-          <div class="font-medium">${g.name}</div>
+    li.innerHTML = `<div class="flex items-center justify-between">
+        <div><div class="font-medium">${g.name}</div>
           <div class="text-xs text-slate-600">Target ${fmt(g.target)} • ${fmt(g.monthly)}/mo • ETA ${months} mo</div>
         </div>
         <div class="mono">${fmt(g.progress||0)}</div>
@@ -329,26 +359,20 @@ function renderGoals(){
       </div>`;
     ul.appendChild(li);
   }
-  $all('[data-contrib]').forEach(b=> b.onclick = ()=> contributeToGoal(parseInt(b.getAttribute('data-contrib'))));
-  $all('[data-delgoal]').forEach(b=> b.onclick = ()=> { S.goals.splice(parseInt(b.getAttribute('data-delgoal')),1); save(); renderGoals(); });
+  $all('[data-contrib]').forEach(b=> b.onclick = ()=> {
+    const i=parseInt(b.getAttribute('data-contrib')); const g=S.goals[i];
+    const amt = parseFloat(prompt('Contribute to '+g.name, String(g.monthly))||'0'); if(!amt) return;
+    g.progress=(g.progress||0)+amt; autoSave(); renderGoals();
+  });
+  $all('[data-delgoal]').forEach(b=> b.onclick = ()=> { S.goals.splice(parseInt(b.getAttribute('data-delgoal')),1); autoSave(); renderGoals(); });
 }
-
-// --- Tools ---
-$('#loan-calc').onclick = () => {
-  const P = parseFloat($('#loan-principal').value||'0');
-  const r = (parseFloat($('#loan-rate').value||'0')/100)/12;
-  const n = parseInt($('#loan-term').value||'0');
-  if (!P || !r || !n) { $('#loan-out').textContent = 'Enter principal, APR, and term.'; return; }
-  const m = P * (r*Math.pow(1+r,n)) / (Math.pow(1+r,n)-1);
-  const total = m*n; const interest = total - P;
-  $('#loan-out').textContent = `Payment: ${fmt(m)} • Total: ${fmt(total)} • Interest: ${fmt(interest)}`;
-};
-$('#nw-calc').onclick = () => {
-  const a = parseFloat($('#nw-assets').value||'0'), l = parseFloat($('#nw-liabs').value||'0');
-  $('#nw-out').textContent = 'Net worth: ' + fmt(a - l);
+$('#goal-add').onclick = ()=>{
+  const name=$('#goal-name').value.trim(), target=parseFloat($('#goal-target').value||'0'), monthly=parseFloat($('#goal-monthly').value||'0');
+  if(!name||!target||!monthly) return;
+  S.goals.push({ name, target, monthly, progress:0 });
+  $('#goal-name').value=''; $('#goal-target').value=''; $('#goal-monthly').value=''; autoSave(); renderGoals();
 };
 
-// Rules UI
 function renderRules(){
   const ul = $('#rule-list'); ul.innerHTML='';
   if (!S.rules.length) ul.innerHTML = '<li class="text-slate-500">No rules yet.</li>';
@@ -358,7 +382,7 @@ function renderRules(){
     li.innerHTML = `<div><b>${r.match}</b> → ${r.category}</div><button class="btn btn-ghost" data-delrule="${i}">Delete</button>`;
     ul.appendChild(li);
   });
-  $all('[data-delrule]').forEach(b=> b.onclick = ()=>{ S.rules.splice(parseInt(b.getAttribute('data-delrule')),1); save(); recompute(); renderAll(); });
+  $all('[data-delrule]').forEach(b=> b.onclick = ()=>{ S.rules.splice(parseInt(b.getAttribute('data-delrule')),1); autoSave(); recompute(); renderAll(); });
 }
 $('#rule-add').onclick = ()=>{
   const m = $('#rule-merchant').value.trim();
@@ -366,10 +390,93 @@ $('#rule-add').onclick = ()=>{
   if (!m || !c) return;
   S.rules.push({ match: m, category: c });
   $('#rule-merchant').value=''; $('#rule-category').value='';
-  save(); recompute(); renderAll();
+  autoSave(); recompute(); renderAll();
 };
 
-// --- Transactions / Reports ---
+// Imports
+function parseCSV(text){
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = lines[0].split(',').map(h=>h.trim().toLowerCase());
+  const idx = (name) => headers.indexOf(name);
+  const mapIdx = {
+    date: Math.max(idx('date'), idx('posted')),
+    name: Math.max(idx('name'), idx('description'), idx('payee')),
+    amount: idx('amount')
+  };
+  const rows = [];
+  for (let i=1;i<lines.length;i++){
+    const cols = lines[i].split(',');
+    const row = { date: cols[mapIdx.date]?.trim(), name: cols[mapIdx.name]?.trim(), amount: cols[mapIdx.amount]?.trim() };
+    if (row.date && row.amount) rows.push(row);
+  }
+  return rows;
+}
+function parseOFX(text){
+  const txns = [];
+  const chunks = text.split(/<STMTTRN>/i).slice(1);
+  for (const ch of chunks){
+    const get = (tag) => (ch.match(new RegExp(`<${tag}>\s*([^\r\n<]+)`, 'i'))||[])[1]||'';
+    const dt = get('DTPOSTED').slice(0,8);
+    const date = dt ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
+    const name = get('NAME') || get('MEMO');
+    const amount = get('TRNAMT');
+    if (date && amount) txns.push({ date, name, amount });
+  }
+  return txns;
+}
+function parseQIF(text){
+  const rows = []; let cur = {};
+  for (const line of text.split(/\r?\n/)){
+    if (line === '^'){ if (cur.D && cur.T){ rows.push({ date: cur.D, name: cur.P||'', amount: cur.T }); } cur = {}; continue; }
+    const tag = line[0]; const val = line.slice(1).trim();
+    if (tag==='D') cur.D = val.replace(/(\d{1,2})[\/](\d{1,2})[\/](\d{2,4})/, (m,a,b,c)=>{
+      const yyyy = c.length===2 ? ('20'+c) : c; const mm = ('0'+a).slice(-2); const dd=('0'+b).slice(-2); return `${yyyy}-${mm}-${dd}`;
+    });
+    if (tag==='P') cur.P = val;
+    if (tag==='T') cur.T = val;
+  }
+  return rows;
+}
+async function importGeneric(){
+  const file = $('#file-generic').files?.[0];
+  if (!file) return alert('Choose a CSV/OFX/QIF file first');
+  const text = await file.text();
+  let rows = [];
+  const lc = (file.name||'').toLowerCase();
+  if (lc.endsWith('.csv')) rows = parseCSV(text);
+  else if (lc.endsWith('.ofx')) rows = parseOFX(text);
+  else if (lc.endsWith('.qif')) rows = parseQIF(text);
+  else {
+    if (/<OFX>/i.test(text)) rows = parseOFX(text);
+    else rows = parseCSV(text);
+  }
+  if (!rows.length) return alert('Could not parse any transactions from file');
+  const r = await fetch('/api/tx_import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rows }) });
+  const j = await r.json(); log('tx_import:', j);
+  await syncTx();
+}
+$('#btn-import-generic').onclick = importGeneric;
+
+// Presence
+async function presenceHeartbeat(){
+  if (!S.share) return;
+  try{ await fetch(`/api/presence?share=${encodeURIComponent(S.share)}`, { method:'POST' }); }catch{}
+}
+async function presenceList(){
+  if (!S.share) { $('#presence-list').textContent='—'; return; }
+  try{ const r=await fetch(`/api/presence?share=${encodeURIComponent(S.share)}`); const j=await r.json(); $('#presence-list').textContent = (j.online||[]).join(', ') || '—'; }catch{}
+}
+setInterval(()=>{ presenceHeartbeat(); presenceList(); }, 20000);
+
+// Email subscribe
+$('#email-save').onclick = async ()=>{
+  const email = $('#email-input').value.trim(); if (!email) return;
+  const r = await fetch('/api/subscribe_email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email }) });
+  log('subscribe_email:', await r.json());
+  alert('Subscribed.');
+};
+
 function renderTx(){
   const tbody = $('#tx-body'); tbody.innerHTML='';
   const q = ($('#tx-search').value||'').toLowerCase();
@@ -390,38 +497,28 @@ function renderTx(){
 }
 $('#tx-search').oninput = renderTx;
 
-// --- Backend calls ---
-async function ensureAuth(){
-  try { const r = await fetch('/api/auth_login', { method:'POST' }); log('auth_login:', await r.json()); }
-  catch(e){ log('auth_login error:', e.message); }
-}
+// Backend calls
+async function ensureAuth(){ try{ const r=await fetch('/api/auth_login',{method:'POST'}); log('auth_login:', await r.json()); }catch(e){ log('auth_login error:', e.message);} }
 async function openPlaid(){
   try{
-    const res = await fetch('/api/create_link_token', { method:'POST' });
-    const data = await res.json(); log('create_link_token:', data);
-    if (!data.link_token || !/^link-/.test(data.link_token)) throw new Error('Bad link_token');
-    const handler = Plaid.create({
-      token: data.link_token,
-      onSuccess: async (public_token) => {
-        const r = await fetch('/api/exchange_public_token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ public_token }) });
-        log('exchange_public_token:', await r.json());
-        await syncTx(); document.querySelector('[data-tab="reports"]').click();
-      }
-    });
-    handler.open();
-  } catch (e) { log('Link error:', e.message); }
+    const res=await fetch('/api/create_link_token',{method:'POST'}); const data=await res.json(); log('create_link_token:', data);
+    if(!data.link_token||!/^link-/.test(data.link_token)) throw new Error('Bad link_token');
+    const handler=Plaid.create({ token:data.link_token, onSuccess: async (public_token)=>{
+      const r=await fetch('/api/exchange_public_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({public_token})});
+      log('exchange_public_token:', await r.json()); await syncTx();
+      document.querySelector('[data-tab="reports"]').click();
+    }}); handler.open();
+  }catch(e){ log('Link error:', e.message); }
 }
 async function syncTx(){
   try{
-    const r = await fetch('/api/tx_sync', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ cursors: {} }) });
-    const j = await r.json(); log('tx_sync:', j);
-    if (Array.isArray(j.added)) {
-      S.tx = j.added; recompute(); renderAll();
-    }
-  } catch (e) { log('sync error:', e.message); }
+    const qs = (S.useSharedTx && S.share) ? `?share=${encodeURIComponent(S.share)}` : '';
+    const r=await fetch('/api/tx_sync'+qs,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cursors:{}})});
+    const j=await r.json(); log('tx_sync:', j);
+    if(Array.isArray(j.added)){ S.tx=j.added; recompute(); renderAll(); }
+  }catch(e){ log('sync error:', e.message); }
 }
 
-// --- Tabs ---
 $all('[data-tab]').forEach(btn=>{
   btn.addEventListener('click',()=>{
     $all('[data-tab]').forEach(b=>b.classList.remove('tab-active'));
@@ -432,16 +529,11 @@ $all('[data-tab]').forEach(btn=>{
   });
 });
 
-// --- Init ---
 function renderAll(){ renderBudget(); renderGoals(); renderRules(); renderTx(); }
-function initMonth(){
-  setupMonthSelect();
-  recompute(); renderAll();
+function init(){
+  setupMonthSelect(); renderAll(); ensureAuth(); loadFromServer(); presenceHeartbeat(); presenceList();
 }
-document.getElementById('btn-link').onclick = () => openPlaid();
-document.getElementById('btn-sync').onclick = () => syncTx();
-document.getElementById('goal-add').onclick = () => addGoal();
-ensureAuth(); initMonth();
+init();
 </script>
 </body>
 </html>

@@ -7,6 +7,7 @@ export default async function handler(req, res){
     PLAID_COUNTRY_CODES: process.env.PLAID_COUNTRY_CODES || null,
     JWT_SECRET: mask(process.env.JWT_SECRET),
     KV_REST_API_URL: mask(process.env.KV_REST_API_URL),
-    KV_REST_API_TOKEN: mask(process.env.KV_REST_API_TOKEN)
+    KV_REST_API_TOKEN: mask(process.env.KV_REST_API_TOKEN),
+    RESEND_API_KEY: mask(process.env.RESEND_API_KEY)
   }});
 }
