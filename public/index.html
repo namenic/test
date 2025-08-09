@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Local Budget — Smart v1</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <style>
+    .card { @apply bg-white rounded-2xl shadow p-5 border border-slate-100; }
+    .btn  { @apply inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium; }
+    .btn-primary { @apply bg-blue-600 text-white hover:bg-blue-700; }
+    .btn-ghost   { @apply bg-slate-100 text-slate-800 hover:bg-slate-200; }
+    .tab { @apply px-3 py-2 rounded-xl text-sm font-medium cursor-pointer; }
+    .tab-active { @apply bg-blue-50 text-blue-700 border border-blue-200; }
+    .input { @apply border rounded-lg px-3 py-2 outline-none focus:ring focus:ring-blue-100; }
+    .label { @apply text-xs font-semibold text-slate-500 uppercase; }
+    .mono { font-variant-numeric: tabular-nums; }
+    .bar { height: 8px; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-6xl mx-auto p-4 md:p-6 space-y-4">
+    <header class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-blue-600"></div>
+        <div>
+          <h1 class="text-xl font-bold leading-tight">Local Budget</h1>
+          <div class="text-xs text-slate-500 -mt-1">YNAB-style zero-sum budgeting</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <select id="month" class="input">
+          <!-- filled by JS as YYYY-MM -->
+        </select>
+        <button id="close-month" class="btn btn-ghost" title="Carry available to next month">Close Month</button>
+        <button id="btn-link" class="btn btn-primary">Connect bank</button>
+        <button id="btn-sync" class="btn btn-ghost">Sync</button>
+      </div>
+    </header>
+
+    <nav class="flex gap-2">
+      <button data-tab="budget" class="tab tab-active">Budget</button>
+      <button data-tab="goals" class="tab">Goals</button>
+      <button data-tab="reports" class="tab">Reports</button>
+      <button data-tab="tools" class="tab">Tools</button>
+      <button data-tab="logs" class="tab">Logs</button>
+    </nav>
+
+    <main class="space-y-4">
+      <!-- Budget -->
+      <section id="tab-budget" class="card">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <h2 class="font-semibold">Budget</h2>
+            <label class="flex items-center gap-2 text-xs text-slate-600">
+              <input id="rollovers" type="checkbox" class="scale-110"> Enable rollovers
+            </label>
+          </div>
+          <div class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
+            <span id="budget-summary">Available total: $0.00</span>
+          </div>
+        </div>
+        <div class="overflow-auto">
+          <table class="w-full mt-3 text-sm">
+            <thead class="text-slate-500">
+              <tr>
+                <th class="text-left p-2">Category</th>
+                <th class="text-right p-2">Assigned</th>
+                <th class="text-right p-2">Activity</th>
+                <th class="text-right p-2">Available</th>
+                <th class="text-right p-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="budget-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Goals -->
+      <section id="tab-goals" class="card hidden">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Goals</h2>
+          <div class="text-xs text-slate-600">Progress bars & ETA</div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-4 mt-3">
+          <div class="space-y-2">
+            <div class="label">Goal name</div>
+            <input id="goal-name" class="input w-full" placeholder="Emergency Fund">
+            <div class="label">Target Amount</div>
+            <input id="goal-target" class="input w-full" type="number" placeholder="5000">
+            <div class="label">Monthly Contribution</div>
+            <input id="goal-monthly" class="input w-full" type="number" placeholder="250">
+            <button id="goal-add" class="btn btn-primary mt-2">Add Goal</button>
+          </div>
+          <div>
+            <div class="label">My Goals</div>
+            <ul id="goal-list" class="mt-2 space-y-3"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Reports -->
+      <section id="tab-reports" class="card hidden">
+        <h2 class="font-semibold">Spending</h2>
+        <div class="flex items-center gap-2 text-sm">
+          <div class="label">Search</div>
+          <input id="tx-search" class="input" placeholder="merchant/category">
+        </div>
+        <div class="overflow-auto">
+          <table class="w-full mt-3 text-sm">
+            <thead class="text-slate-500">
+              <tr><th class="text-left p-2">Date</th><th class="text-left p-2">Payee</th><th class="text-left p-2">Category</th><th class="text-right p-2">Amount</th></tr>
+            </thead>
+            <tbody id="tx-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tools -->
+      <section id="tab-tools" class="card hidden">
+        <h2 class="font-semibold mb-2">Tools & Rules</h2>
+        <div class="grid md:grid-cols-3 gap-4">
+          <div class="space-y-2">
+            <div class="label">Loan Calculator</div>
+            <input id="loan-principal" class="input w-full" type="number" placeholder="Principal (e.g., 10000)">
+            <input id="loan-rate" class="input w-full" type="number" placeholder="APR % (e.g., 7.5)">
+            <input id="loan-term" class="input w-full" type="number" placeholder="Term months (e.g., 60)">
+            <button id="loan-calc" class="btn btn-ghost">Compute</button>
+            <div id="loan-out" class="text-sm mono"></div>
+          </div>
+          <div class="space-y-2">
+            <div class="label">Net Worth</div>
+            <input id="nw-assets" class="input w-full" type="number" placeholder="Total assets">
+            <input id="nw-liabs" class="input w-full" type="number" placeholder="Total liabilities">
+            <button id="nw-calc" class="btn btn-ghost">Compute</button>
+            <div id="nw-out" class="text-sm mono"></div>
+          </div>
+          <div class="space-y-2">
+            <div class="label">Auto-categorization Rules</div>
+            <div class="text-xs text-slate-600">Example: merchant contains <b>walmart</b> → Groceries</div>
+            <div class="flex gap-2">
+              <input id="rule-merchant" class="input w-full" placeholder="merchant substring">
+              <input id="rule-category" class="input w-full" placeholder="Category name">
+              <button id="rule-add" class="btn btn-ghost">Add</button>
+            </div>
+            <ul id="rule-list" class="text-sm space-y-1"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Logs -->
+      <section id="tab-logs" class="card hidden">
+        <h2 class="font-semibold">Logs</h2>
+        <pre id="log" class="bg-slate-50 border rounded-lg p-3 text-xs h-64 overflow-auto"></pre>
+      </section>
+    </main>
+  </div>
+
+<script>
+// --- Utilities ---
+function $(q){ return document.querySelector(q); }
+function $all(q){ return Array.from(document.querySelectorAll(q)); }
+function fmt(n){ return (n<0?'-':'')+'$'+Math.abs(n).toFixed(2); }
+function log(...args){ const el=$('#log'); el.textContent += args.map(a=>typeof a==='string'?a:JSON.stringify(a,null,2)).join(' ') + "\\n"; el.scrollTop = el.scrollHeight; }
+function ym(d){ return (d||new Date()).toISOString().slice(0,7); }
+function prevYm(ymStr){ const [y,m]=ymStr.split('-').map(Number); const d=new Date(y, m-2, 1); return d.toISOString().slice(0,7); }
+
+// --- State ---
+const S = {
+  month: ym(),
+  rollovers: JSON.parse(localStorage.getItem('rollovers')||'true'),
+  categories: JSON.parse(localStorage.getItem('categories')||'[]'),
+  assignments: JSON.parse(localStorage.getItem('assignments')||'{}'), // { "YYYY-MM": { "Groceries": 400, ... } }
+  carry: JSON.parse(localStorage.getItem('carry')||'{}'), // { "YYYY-MM": { "Groceries": 25.12, ... } }
+  goals: JSON.parse(localStorage.getItem('goals')||'[]'),
+  rules: JSON.parse(localStorage.getItem('rules')||'[]'), // [{match:'walmart', category:'Groceries'}]
+  tx: []
+};
+
+if (!S.categories || S.categories.length === 0){
+  S.categories = ['Rent/Mortgage','Groceries','Dining Out','Transportation','Utilities'];
+}
+if (!(S.month in S.assignments)) S.assignments[S.month] = {};
+
+// --- Month controls ---
+function setupMonthSelect(){
+  const sel = $('#month'); sel.innerHTML='';
+  const now = new Date();
+  for (let i=0;i<18;i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const k = d.toISOString().slice(0,7);
+    const opt = document.createElement('option');
+    opt.value = k; opt.textContent = k; if (k===S.month) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.onchange = ()=>{ S.month = sel.value; if(!(S.month in S.assignments)) S.assignments[S.month]={}; save(); recompute(); renderAll(); };
+  $('#rollovers').checked = !!S.rollovers;
+  $('#rollovers').onchange = ()=>{ S.rollovers = $('#rollovers').checked; save(); recompute(); renderAll(); };
+  $('#close-month').onclick = closeMonth;
+}
+
+function save(){
+  localStorage.setItem('categories', JSON.stringify(S.categories));
+  localStorage.setItem('assignments', JSON.stringify(S.assignments));
+  localStorage.setItem('carry', JSON.stringify(S.carry));
+  localStorage.setItem('goals', JSON.stringify(S.goals));
+  localStorage.setItem('rules', JSON.stringify(S.rules));
+  localStorage.setItem('rollovers', JSON.stringify(S.rollovers));
+}
+
+// --- Budget logic ---
+function sumSpendFor(cat, month){
+  const [y,m] = month.split('-');
+  const f = (t)=> (t.date||'').startsWith(month) && normalizeCategory(t)===cat;
+  // Plaid amounts are positive for outflow; display as negative activity:
+  return S.tx.filter(f).reduce((a,t)=> a + (t.amount||0), 0);
+}
+
+function normalizeCategory(t){
+  const name = (t.merchant_name || t.name || '').toLowerCase();
+  for (const r of S.rules){
+    if (r.match && name.includes(r.match.toLowerCase())) return r.category;
+  }
+  // Fallback to Plaid primary category
+  return t.personal_finance_category?.primary || t.category?.[0] || 'Uncategorized';
+}
+
+function recompute(){
+  // Build view model for current month
+  const month = S.month;
+  const prev = prevYm(month);
+  const assign = S.assignments[month] || {};
+  const prevCarry = (S.carry[prev] || {});
+  const rows = [];
+  let totalAvail = 0;
+
+  for (const cat of S.categories){
+    const assigned = +((assign[cat]||0));
+    const spend = sumSpendFor(cat, month); // positive number
+    const rollover = S.rollovers ? +(prevCarry[cat]||0) : 0;
+    const available = rollover + assigned - spend;
+    totalAvail += available;
+    rows.push({ cat, assigned, spend, available, rollover });
+  }
+  S._rows = rows;
+  S._totalAvail = totalAvail;
+}
+
+function setAssignment(cat){
+  const v = prompt(`Assign amount for ${cat} in ${S.month}`, String(S.assignments[S.month][cat]||0));
+  if (v===null) return;
+  const n = parseFloat(v||'0'); if (isNaN(n)) return;
+  S.assignments[S.month][cat] = n; save(); recompute(); renderBudget();
+}
+
+function closeMonth(){
+  // Save current available as carry for next month
+  const next = (function(month){
+    const [y,m]=month.split('-').map(Number);
+    const d = new Date(y, m, 1); // next month
+    return d.toISOString().slice(0,7);
+  })(S.month);
+  S.carry[next] = S.carry[next] || {};
+  for (const r of (S._rows||[])){
+    S.carry[next][r.cat] = r.available;
+  }
+  save();
+  alert(`Closed ${S.month}. Carry posted to ${next}.`);
+}
+
+function renderBudget(){
+  const tbody = $('#budget-body'); tbody.innerHTML='';
+  for (const r of (S._rows||[])){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="p-2">${r.cat}</td>
+      <td class="p-2 text-right mono">${fmt(r.assigned)}</td>
+      <td class="p-2 text-right mono text-red-600">-${fmt(r.spend).slice(1)}</td>
+      <td class="p-2 text-right mono ${r.available<0?'text-red-600':''}">${fmt(r.available)}</td>
+      <td class="p-2 text-right"><button class="btn btn-ghost" data-assign="${r.cat}">Assign…</button></td>`;
+    tbody.appendChild(tr);
+  }
+  $('#budget-summary').textContent = 'Available total: ' + fmt(S._totalAvail||0);
+  $all('[data-assign]').forEach(b=> b.onclick = ()=> setAssignment(b.getAttribute('data-assign')) );
+}
+
+// --- Goals ---
+function addGoal(){
+  const name = $('#goal-name').value.trim();
+  const target = parseFloat($('#goal-target').value||'0');
+  const monthly = parseFloat($('#goal-monthly').value||'0');
+  if (!name || !target || !monthly) return;
+  S.goals.push({ name, target, monthly, progress: 0 });
+  $('#goal-name').value=''; $('#goal-target').value=''; $('#goal-monthly').value='';
+  save(); renderGoals();
+}
+
+function contributeToGoal(idx){
+  const g = S.goals[idx];
+  const amt = parseFloat(prompt(`Contribute to ${g.name}`, String(g.monthly))||'0');
+  if (!amt) return;
+  g.progress = (g.progress||0) + amt;
+  save(); renderGoals();
+}
+
+function renderGoals(){
+  const ul = $('#goal-list'); ul.innerHTML='';
+  for (let i=0;i<S.goals.length;i++){
+    const g = S.goals[i];
+    const pct = Math.max(0, Math.min(100, Math.round((g.progress/g.target)*100)));
+    const months = g.monthly>0 ? Math.ceil(Math.max(0, g.target - g.progress)/g.monthly) : '∞';
+    const li = document.createElement('li');
+    li.className = 'p-3 rounded-lg border space-y-2';
+    li.innerHTML = `
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium">${g.name}</div>
+          <div class="text-xs text-slate-600">Target ${fmt(g.target)} • ${fmt(g.monthly)}/mo • ETA ${months} mo</div>
+        </div>
+        <div class="mono">${fmt(g.progress||0)}</div>
+      </div>
+      <div class="w-full bg-slate-100 rounded-full bar overflow-hidden">
+        <div class="bg-blue-600 h-full" style="width:${pct}%;"></div>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost" data-contrib="${i}">Contribute</button>
+        <button class="btn btn-ghost" data-delgoal="${i}">Remove</button>
+      </div>`;
+    ul.appendChild(li);
+  }
+  $all('[data-contrib]').forEach(b=> b.onclick = ()=> contributeToGoal(parseInt(b.getAttribute('data-contrib'))));
+  $all('[data-delgoal]').forEach(b=> b.onclick = ()=> { S.goals.splice(parseInt(b.getAttribute('data-delgoal')),1); save(); renderGoals(); });
+}
+
+// --- Tools ---
+$('#loan-calc').onclick = () => {
+  const P = parseFloat($('#loan-principal').value||'0');
+  const r = (parseFloat($('#loan-rate').value||'0')/100)/12;
+  const n = parseInt($('#loan-term').value||'0');
+  if (!P || !r || !n) { $('#loan-out').textContent = 'Enter principal, APR, and term.'; return; }
+  const m = P * (r*Math.pow(1+r,n)) / (Math.pow(1+r,n)-1);
+  const total = m*n; const interest = total - P;
+  $('#loan-out').textContent = `Payment: ${fmt(m)} • Total: ${fmt(total)} • Interest: ${fmt(interest)}`;
+};
+$('#nw-calc').onclick = () => {
+  const a = parseFloat($('#nw-assets').value||'0'), l = parseFloat($('#nw-liabs').value||'0');
+  $('#nw-out').textContent = 'Net worth: ' + fmt(a - l);
+};
+
+// Rules UI
+function renderRules(){
+  const ul = $('#rule-list'); ul.innerHTML='';
+  if (!S.rules.length) ul.innerHTML = '<li class="text-slate-500">No rules yet.</li>';
+  S.rules.forEach((r,i)=>{
+    const li = document.createElement('li');
+    li.className='flex items-center justify-between border rounded-lg px-2 py-1';
+    li.innerHTML = `<div><b>${r.match}</b> → ${r.category}</div><button class="btn btn-ghost" data-delrule="${i}">Delete</button>`;
+    ul.appendChild(li);
+  });
+  $all('[data-delrule]').forEach(b=> b.onclick = ()=>{ S.rules.splice(parseInt(b.getAttribute('data-delrule')),1); save(); recompute(); renderAll(); });
+}
+$('#rule-add').onclick = ()=>{
+  const m = $('#rule-merchant').value.trim();
+  const c = $('#rule-category').value.trim();
+  if (!m || !c) return;
+  S.rules.push({ match: m, category: c });
+  $('#rule-merchant').value=''; $('#rule-category').value='';
+  save(); recompute(); renderAll();
+};
+
+// --- Transactions / Reports ---
+function renderTx(){
+  const tbody = $('#tx-body'); tbody.innerHTML='';
+  const q = ($('#tx-search').value||'').toLowerCase();
+  const month = S.month;
+  const rows = S.tx
+    .filter(t => (t.date||'').startsWith(month))
+    .map(t => ({...t, _cat: normalizeCategory(t)}))
+    .filter(t => !q || (t.merchant_name||t.name||'').toLowerCase().includes(q) || (t._cat||'').toLowerCase().includes(q))
+    .sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  for (const t of rows){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="p-2 mono">${t.date||''}</td>
+      <td class="p-2">${t.merchant_name||t.name||''}</td>
+      <td class="p-2">${t._cat||''}</td>
+      <td class="p-2 text-right mono">-${fmt(t.amount||0).slice(1)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+$('#tx-search').oninput = renderTx;
+
+// --- Backend calls ---
+async function ensureAuth(){
+  try { const r = await fetch('/api/auth_login', { method:'POST' }); log('auth_login:', await r.json()); }
+  catch(e){ log('auth_login error:', e.message); }
+}
+async function openPlaid(){
+  try{
+    const res = await fetch('/api/create_link_token', { method:'POST' });
+    const data = await res.json(); log('create_link_token:', data);
+    if (!data.link_token || !/^link-/.test(data.link_token)) throw new Error('Bad link_token');
+    const handler = Plaid.create({
+      token: data.link_token,
+      onSuccess: async (public_token) => {
+        const r = await fetch('/api/exchange_public_token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ public_token }) });
+        log('exchange_public_token:', await r.json());
+        await syncTx(); document.querySelector('[data-tab="reports"]').click();
+      }
+    });
+    handler.open();
+  } catch (e) { log('Link error:', e.message); }
+}
+async function syncTx(){
+  try{
+    const r = await fetch('/api/tx_sync', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ cursors: {} }) });
+    const j = await r.json(); log('tx_sync:', j);
+    if (Array.isArray(j.added)) {
+      S.tx = j.added; recompute(); renderAll();
+    }
+  } catch (e) { log('sync error:', e.message); }
+}
+
+// --- Tabs ---
+$all('[data-tab]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    $all('[data-tab]').forEach(b=>b.classList.remove('tab-active'));
+    btn.classList.add('tab-active');
+    const id = btn.getAttribute('data-tab');
+    $all('main > section').forEach(s=>s.classList.add('hidden'));
+    $('#tab-'+id).classList.remove('hidden');
+  });
+});
+
+// --- Init ---
+function renderAll(){ renderBudget(); renderGoals(); renderRules(); renderTx(); }
+function initMonth(){
+  setupMonthSelect();
+  recompute(); renderAll();
+}
+document.getElementById('btn-link').onclick = () => openPlaid();
+document.getElementById('btn-sync').onclick = () => syncTx();
+document.getElementById('goal-add').onclick = () => addGoal();
+ensureAuth(); initMonth();
+</script>
+</body>
+</html>
